@@ -1,5 +1,5 @@
 """
-libsetupdeps.py
+`libsetupdeps.py <https://github.com/ZheFeng7110/libsetupdeps.py.git>`_
 
 A lightweight source-dependency setup helper for C/C++ projects.
 
@@ -7,7 +7,7 @@ Usage:
     1) Put this file in your project root.
     2) Create your own entry script (for example: setupdeps.py).
     3) In that script, import and call APIs such as add_resource/add_git_resource.
-    4) Run: python <your-script>.py [--append-to-gitignore] [--reset] [--help] [--version]
+    4) Run: `python <your-script>.py [--append-to-gitignore] [--reset] [--help] [--version]`
 
 Note:
     This library only fetches source code. Build/install/link are intentionally handled
