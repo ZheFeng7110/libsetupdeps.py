@@ -1,6 +1,6 @@
 # libsetupdeps.py
 
-[English](./README.md) | [简体中文](./README_zh.md)
+[English](./README.md) | 简体中文
 
 `libsetupdeps.py` 是一个面向 C/C++ 工程的轻量依赖源码配置工具。
 
@@ -45,7 +45,7 @@ add_git_resource(
 ## API
 
 ```Python
-  add_resource(name: str, url: str, path: str) -> None
+add_resource(name: str, url: str, path: str) -> None
 ```
 
 下载并解压压缩包资源到目标目录。
@@ -55,7 +55,15 @@ add_git_resource(
 - path：目标目录（相对路径时，以用户入口脚本所在目录为基准）
 
 ```Python
-  add_git_resource(name: str, url: str, path: str, *, branch: str | None = None, tag: str | None = None, hash: str | None = None) -> None
+add_git_resource(
+    name: str,
+    url: str,
+    path: str,
+    *,
+    branch: str | None = None,
+    tag: str | None = None,
+    hash: str | None = None
+) -> None
 ```
 
 克隆 git 仓库并可选签出到指定分支/标签/提交。

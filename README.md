@@ -1,6 +1,6 @@
 # libsetupdeps.py
 
-[English](./README.md) | [简体中文](./README_zh.md)
+English | [简体中文](./README_zh.md)
 
 `libsetupdeps.py` is a lightweight source-dependency setup tool for C/C++ projects.
 
