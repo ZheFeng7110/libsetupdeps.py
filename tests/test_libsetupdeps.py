@@ -71,7 +71,7 @@ def test_version_flag_prints_version_and_exits(
     with pytest.raises(SystemExit) as exc:
         libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
     assert exc.value.code == 0
-    assert capsys.readouterr().out.strip() == "0.0.0"
+    assert capsys.readouterr().out.strip() == "0.1.0"
 
 
 def test_help_flag_prints_help_and_exits(
@@ -142,7 +142,8 @@ def test_add_resource_download_to_cache_then_extract(
     assert extracted.read_text(encoding="utf-8") == "int v = 1;\n"
     cache_dir = tmp_path / ".libsetupdeps_cache"
     assert cache_dir.exists()
-    assert list(cache_dir.iterdir()) == []
+    cache_items = sorted(path.name for path in cache_dir.iterdir())
+    assert cache_items == [".libsetupdeps_state.json"]
 
 
 def test_quiet_mode_hides_download_progress(
@@ -226,7 +227,9 @@ def test_append_to_gitignore_creates_file_and_appends_path(
 
     gitignore = tmp_path / ".gitignore"
     assert gitignore.exists()
-    assert gitignore.read_text(encoding="utf-8").splitlines()[-1] == "dependency/lua"
+    lines = gitignore.read_text(encoding="utf-8").splitlines()
+    assert ".libsetupdeps_cache" in lines
+    assert lines[-1] == "dependency/lua"
 
 
 def test_append_to_gitignore_does_not_duplicate_entries(
@@ -256,18 +259,32 @@ def test_append_to_gitignore_does_not_duplicate_entries(
 
     lines = (tmp_path / ".gitignore").read_text(encoding="utf-8").splitlines()
     assert lines.count("dependency/lua") == 1
+    assert lines.count(".libsetupdeps_cache") == 1
 
 
-def test_add_resource_unsupported_archive_type(
+def test_add_resource_non_archive_file_is_moved_to_target(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
 
-    with pytest.raises(ValueError):
-        libsetupdeps.add_resource(
-            "lua", "https://example.org/lua.rar", "dependency/lua"
-        )
+    payload = b"plain-text-file"
+
+    class _FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr(
+        libsetupdeps.request, "urlopen", lambda _url, timeout=None: _FakeResponse(payload)
+    )
+    libsetupdeps.add_resource("license", "https://example.org/LICENSE", "dependency/files")
+
+    downloaded = tmp_path / "dependency" / "files" / "LICENSE"
+    assert downloaded.exists()
+    assert downloaded.read_bytes() == payload
 
 
 def test_add_resource_updates_state_file(
@@ -296,7 +313,7 @@ def test_add_resource_updates_state_file(
     libsetupdeps.add_resource("lua", "https://example.org/lua.tar.gz", "dependency/lua")
 
     state = json.loads(
-        (tmp_path / ".libsetupdeps_state.json").read_text(encoding="utf-8")
+        (tmp_path / ".libsetupdeps_cache" / ".libsetupdeps_state.json").read_text(encoding="utf-8")
     )
     assert state["resources"]["lua"]["type"] == "resource"
     assert state["resources"]["lua"]["url"] == "https://example.org/lua.tar.gz"
@@ -451,7 +468,7 @@ def test_add_git_resource_updates_state_file(
         tag="v1.17.0",
     )
     state = json.loads(
-        (tmp_path / ".libsetupdeps_state.json").read_text(encoding="utf-8")
+        (tmp_path / ".libsetupdeps_cache" / ".libsetupdeps_state.json").read_text(encoding="utf-8")
     )
     assert state["resources"]["gtest"]["type"] == "git"
     assert state["resources"]["gtest"]["ref_type"] == "tag"
@@ -478,7 +495,8 @@ def test_reset_redownloads_resource_when_target_already_exists(
             }
         }
     }
-    (tmp_path / ".libsetupdeps_state.json").write_text(
+    (tmp_path / ".libsetupdeps_cache").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".libsetupdeps_cache" / ".libsetupdeps_state.json").write_text(
         json.dumps(state), encoding="utf-8"
     )
 
@@ -528,7 +546,8 @@ def test_reset_reclones_git_when_target_already_exists(
             }
         }
     }
-    (tmp_path / ".libsetupdeps_state.json").write_text(
+    (tmp_path / ".libsetupdeps_cache").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".libsetupdeps_cache" / ".libsetupdeps_state.json").write_text(
         json.dumps(state), encoding="utf-8"
     )
 
@@ -613,6 +632,6 @@ def test_direct_invocation_prints_prompt_and_exits(
 
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    assert "0.0.0" not in output
+    assert "0.1.0" not in output
     assert "create your own dependency setup script" in output
     assert "--help" in output

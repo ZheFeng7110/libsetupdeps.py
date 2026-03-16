@@ -18,11 +18,11 @@
 
 可选命令行参数：
 
-- `--append-to-gitignore`：将本次配置中的依赖目标路径追加到 `<script_dir>/.gitignore`（若文件不存在会自动创建，已存在条目不会重复追加）。
+- `--append-to-gitignore`：将本次配置中的依赖目标路径以及 `.libsetupdeps_cache` 追加到 `<script_dir>/.gitignore`（若文件不存在会自动创建，已存在条目不会重复追加）。
 - `--reset`：重新配置前先删除已配置依赖目录，然后重新下载/克隆并写回状态。第一次运行时若目录不存在则不会执行删除。
 - `--quiet`：只显示状态信息（如 `Downloading ... Done` / `Cloning ... Done`），不显示进度。
 - `--timeout=<秒数>`：设置下载/克隆超时时间，默认 `120` 秒，超时会终止并报错。
-- `--version`：输出当前版本号并退出（当前为 `0.0.0`）。
+- `--version`：输出当前版本号并退出（当前为 `0.1.0`）。
 - `--help`：输出帮助信息并退出。
 
 示例：
@@ -50,10 +50,10 @@ add_git_resource(
 add_resource(name: str, url: str, path: str) -> None
 ```
 
-下载并解压压缩包资源到目标目录。
+下载资源文件到目标目录。
 
 - name：依赖名称（用于状态记录与错误信息）
-- url：资源 URL（支持 .zip、.tar.gz、.tgz、.tar.xz）
+- url：资源 URL（若为 .zip、.tar.gz、.tgz、.tar.xz 会自动解压；其他文件类型会直接保存到目标目录）
 - path：目标目录（相对路径时，以用户入口脚本所在目录为基准）
 
 ```Python
@@ -79,12 +79,12 @@ add_git_resource(
 
 - 路径解析基准：用户入口脚本所在目录（不是当前 shell 的 cwd）。
 - 下载临时文件目录：<script_dir>/.libsetupdeps_cache/
-- 状态文件：<script_dir>/.libsetupdeps_state.json
+- 状态文件：<script_dir>/.libsetupdeps_cache/.libsetupdeps_state.json
 - 当同一依赖签名（name/url/path/ref）未变化且目标目录存在时，会执行幂等跳过。
 
 ## 错误处理
 
-- 参数错误会抛 ValueError（例如空参数、不支持的压缩格式、ref 冲突）。
+- 参数错误会抛 ValueError（例如空参数、ref 冲突）。
 - 下载/解压/文件系统/git 失败会抛 LibSetupDepsError，消息中包含：
     - 依赖名
     - URL

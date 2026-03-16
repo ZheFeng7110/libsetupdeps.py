@@ -11,11 +11,11 @@
 2. 用户会在自己的工程根目录编写“依赖配置入口脚本”，常见命名为 `setupdeps.py`，但脚本名称可由用户自定义。
 3. 用户脚本需要 `import libsetupdeps` 并调用相关函数，最终由用户自行执行（例如 `python <用户脚本名>.py`）。
    - 支持命令行参数：
-     - `--append-to-gitignore`：将依赖目标路径追加到 `.gitignore` 末尾（无文件则创建，避免重复条目）。
+     - `--append-to-gitignore`：将依赖目标路径和 `.libsetupdeps_cache` 追加到 `.gitignore` 末尾（无文件则创建，避免重复条目）。
      - `--reset`：删除已配置依赖后重新下载/克隆并配置；首次运行无已配置内容时不删除。
      - `--quiet`：仅输出状态信息，不显示下载/克隆进度。
      - `--timeout=xxx`：设置下载/克隆超时时间（单位秒，默认 `120`）。
-     - `--version`：输出版本号（当前为 `0.0.0`）并退出。
+     - `--version`：输出版本号（当前为 `0.1.0`）并退出。
      - `--help`：输出帮助信息并退出。
    - 若用户直接运行 `libsetupdeps.py`（或直接给它传参运行），应提示其创建自己的入口脚本并在脚本中调用 API。
 4. 包管理策略为“仅处理源码”：
@@ -30,7 +30,7 @@
   - 依赖来源定义与解析（如仓库地址、版本、分支、tag、commit）。
   - 源码下载、缓存、目录布局、重复下载规避等。
   - 在下载/克隆时输出状态信息，并在非 quiet 模式下显示进度。
-  - 维护状态文件与缓存目录（如 `.libsetupdeps_state.json`、`.libsetupdeps_cache`）。
+  - 维护状态文件与缓存目录（如 `.libsetupdeps_cache/.libsetupdeps_state.json`、`.libsetupdeps_cache`）。
   - 根据命令行参数执行 `.gitignore` 追加、reset 重置、quiet 输出控制、timeout 超时控制、help/version 输出。
   - 处理直接运行库文件时的用户引导提示。
   - 提供清晰、稳定的 Python API，供用户入口脚本调用。

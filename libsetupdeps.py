@@ -33,7 +33,7 @@ import __main__
 
 _STATE_FILE_NAME = ".libsetupdeps_state.json"
 _CACHE_DIR_NAME = ".libsetupdeps_cache"
-__version__ = "0.0.0"
+__version__ = "0.1.0"
 _META_FLAGS_HANDLED = False
 _DEFAULT_TIMEOUT_SECONDS = 120
 
@@ -79,7 +79,7 @@ def _cache_dir() -> Path:
 
 
 def _state_file() -> Path:
-    return _get_script_dir() / _STATE_FILE_NAME
+    return _cache_dir() / _STATE_FILE_NAME
 
 
 def _load_state() -> dict[str, Any]:
@@ -96,7 +96,9 @@ def _load_state() -> dict[str, Any]:
 
 
 def _save_state(state: dict[str, Any]) -> None:
-    _state_file().write_text(
+    state_path = _state_file()
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
         json.dumps(state, ensure_ascii=True, indent=2, sort_keys=True),
         encoding="utf-8",
     )
@@ -123,7 +125,7 @@ def _help_text(script_name: str | None = None) -> str:
             f"  python {entry_script} --help",
             "",
             "Options:",
-            "  --append-to-gitignore  Append dependency paths to .gitignore.",
+            "  --append-to-gitignore  Append dependency paths and .libsetupdeps_cache to .gitignore.",
             "  --reset                Delete configured paths before re-fetching.",
             "  --quiet                Print status only, suppress progress output.",
             f"  --timeout=<seconds>    Timeout for download/clone operations (default: {_DEFAULT_TIMEOUT_SECONDS}).",
@@ -284,27 +286,46 @@ def _download_to_file(
         )
 
 
-def _detect_archive_suffix(url: str) -> str:
-    path = parse.urlparse(url).path.lower()
-    if path.endswith(".tar.gz") or path.endswith(".tgz"):
+def _is_archive_filename(filename: str) -> bool:
+    lowered = filename.lower()
+    return (
+        lowered.endswith(".zip")
+        or lowered.endswith(".tar.gz")
+        or lowered.endswith(".tgz")
+        or lowered.endswith(".tar.xz")
+    )
+
+
+def _download_file_name(url: str, fallback_name: str) -> str:
+    parsed = parse.urlparse(url)
+    file_name = Path(parsed.path).name.strip()
+    if file_name:
+        return file_name
+    return fallback_name
+
+
+def _temp_file_suffix(file_name: str) -> str:
+    lowered = file_name.lower()
+    if lowered.endswith(".tar.gz"):
         return ".tar.gz"
-    if path.endswith(".tar.xz"):
+    if lowered.endswith(".tar.xz"):
         return ".tar.xz"
-    if path.endswith(".zip"):
-        return ".zip"
-    raise ValueError(f"Unsupported archive format in URL: {url}")
+    if lowered.endswith(".tgz"):
+        return ".tgz"
+    suffix = Path(file_name).suffix
+    return suffix if suffix else ".tmp"
 
 
 def _extract_archive(archive_file: Path, target_dir: Path) -> None:
-    suffix = archive_file.name.lower()
-    if suffix.endswith(".zip"):
+    file_name = archive_file.name.lower()
+    if file_name.endswith(".zip"):
         with zipfile.ZipFile(archive_file, "r") as archive:
             archive.extractall(target_dir)
         return
     if (
-        suffix.endswith(".tar.gz")
-        or suffix.endswith(".tgz")
-        or suffix.endswith(".tar.xz")
+        file_name.endswith(".tar.gz")
+        or file_name.endswith(".tgz")
+        or file_name.endswith(".tar.xz")
     ):
         with tarfile.open(archive_file, "r:*") as archive:
             archive.extractall(target_dir, filter="data")
@@ -422,11 +443,12 @@ def _git_signature(
 
 
 def add_resource(name: str, url: str, path: str) -> None:
-    """Download and extract an archive dependency into a user-specified path.
+    """Download a dependency file and place it into a user-specified path.
 
     Parameters:
         name: Dependency identifier used for state tracking and error messages.
-        url: Archive URL. Supported formats: `.zip`, `.tar.gz`, `.tgz`, `.tar.xz`.
+        url: Resource URL. Archives (`.zip`, `.tar.gz`, `.tgz`, `.tar.xz`) are extracted;
+            other files are moved into the target directory directly.
         path: Target directory. Relative paths are resolved from the user script directory.
     """
 
@@ -445,6 +467,7 @@ def add_resource(name: str, url: str, path: str) -> None:
         _remove_configured_path(target_dir)
         state["resources"].pop(resource_name, None)
     if should_append_to_gitignore:
+        _append_path_to_gitignore(_CACHE_DIR_NAME)
         _append_path_to_gitignore(resource_path)
 
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -453,7 +476,8 @@ def add_resource(name: str, url: str, path: str) -> None:
     if not should_reset and existing == signature and target_dir.exists():
         return
 
-    suffix = _detect_archive_suffix(resource_url)
+    download_file_name = _download_file_name(resource_url, f"{resource_name}.bin")
+    suffix = _temp_file_suffix(download_file_name)
     cache_dir = _cache_dir()
     temp_file_path: Path | None = None
 
@@ -476,7 +500,13 @@ def add_resource(name: str, url: str, path: str) -> None:
             show_progress=not quiet_mode,
         )
 
-        _extract_archive(temp_file_path, target_dir)
+        if _is_archive_filename(download_file_name):
+            _extract_archive(temp_file_path, target_dir)
+        else:
+            destination_file = target_dir / download_file_name
+            if destination_file.exists():
+                destination_file.unlink()
+            shutil.move(str(temp_file_path), str(destination_file))
         _status_line(f"Downloading {resource_name} from {resource_url} ... Done")
         state["resources"][resource_name] = signature
         _save_state(state)
@@ -568,6 +598,7 @@ def add_git_resource(
         _remove_configured_path(target_dir)
         state["resources"].pop(resource_name, None)
     if should_append_to_gitignore:
+        _append_path_to_gitignore(_CACHE_DIR_NAME)
         _append_path_to_gitignore(resource_path)
 
     signature = _git_signature(

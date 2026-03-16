@@ -18,11 +18,11 @@ Its workflow is similar to CMake `FetchContent`, while aiming to avoid repeated 
 
 Optional command-line flags:
 
-- `--append-to-gitignore`: append configured dependency target paths to `<script_dir>/.gitignore` (create if missing, no duplicate entries).
+- `--append-to-gitignore`: append configured dependency target paths and `.libsetupdeps_cache` to `<script_dir>/.gitignore` (create if missing, no duplicate entries).
 - `--reset`: delete configured dependency paths before re-downloading/re-cloning; if this is the first run and paths do not exist, nothing is deleted.
 - `--quiet`: print status only (for example `Downloading ... Done` / `Cloning ... Done`) and suppress progress output.
 - `--timeout=<seconds>`: set download/clone timeout (default `120` seconds). Timed-out operations are terminated.
-- `--version`: print current version and exit (currently `0.0.0`).
+- `--version`: print current version and exit (currently `0.1.0`).
 - `--help`: print help message and exit.
 
 Example:
@@ -50,10 +50,10 @@ add_git_resource(
 add_resource(name: str, url: str, path: str) -> None
 ```
 
-Download and extract an archive dependency into the target directory.
+Download a dependency file into the target directory.
 
 - `name`: dependency name (used in state and errors)
-- `url`: archive URL (supports `.zip`, `.tar.gz`, `.tgz`, `.tar.xz`)
+- `url`: resource URL (archives `.zip`, `.tar.gz`, `.tgz`, `.tar.xz` will be extracted; non-archive files will be saved directly)
 - `path`: target directory (relative paths are resolved from the user script directory)
 
 ```python
@@ -79,12 +79,12 @@ Clone a git repository and optionally checkout one ref.
 
 - Path base: user entry script directory (not shell `cwd`)
 - Temporary download cache: `<script_dir>/.libsetupdeps_cache/`
-- State file: `<script_dir>/.libsetupdeps_state.json`
+- State file: `<script_dir>/.libsetupdeps_cache/.libsetupdeps_state.json`
 - Idempotency: if the dependency signature (`name/url/path/ref`) is unchanged and target path exists, setup is skipped
 
 ## Error handling
 
-- Invalid arguments raise `ValueError` (for example empty values, unsupported archive type, conflicting refs).
+- Invalid arguments raise `ValueError` (for example empty values or conflicting refs).
 - Download/extract/filesystem/git failures raise `LibSetupDepsError` with:
   - dependency name
   - URL
