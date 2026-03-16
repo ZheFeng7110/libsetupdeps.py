@@ -7,7 +7,7 @@ Usage:
     1) Put this file in your project root.
     2) Create your own entry script (for example: setupdeps.py).
     3) In that script, import and call APIs such as add_resource/add_git_resource.
-    4) Run: `python <your-script>.py [--append-to-gitignore] [--reset] [--help] [--version]`
+    4) Run: `python <your-script>.py [--append-to-gitignore] [--reset] [--quiet] [--timeout=<seconds>] [--help] [--version]`
 
 Note:
     This library only fetches source code. Build/install/link are intentionally handled
@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,7 @@ _STATE_FILE_NAME = ".libsetupdeps_state.json"
 _CACHE_DIR_NAME = ".libsetupdeps_cache"
 __version__ = "0.0.0"
 _META_FLAGS_HANDLED = False
+_DEFAULT_TIMEOUT_SECONDS = 120
 
 
 class LibSetupDepsError(RuntimeError):
@@ -116,13 +118,15 @@ def _help_text(script_name: str | None = None) -> str:
     return "\n".join(
         [
             "libsetupdeps.py usage:",
-            f"  python {entry_script} [--append-to-gitignore] [--reset]",
+            f"  python {entry_script} [--append-to-gitignore] [--reset] [--quiet] [--timeout=<seconds>]",
             f"  python {entry_script} --version",
             f"  python {entry_script} --help",
             "",
             "Options:",
             "  --append-to-gitignore  Append dependency paths to .gitignore.",
             "  --reset                Delete configured paths before re-fetching.",
+            "  --quiet                Print status only, suppress progress output.",
+            f"  --timeout=<seconds>    Timeout for download/clone operations (default: {_DEFAULT_TIMEOUT_SECONDS}).",
             "  --version              Print libsetupdeps.py version and exit.",
             "  --help                 Print this help message and exit.",
         ]
@@ -203,6 +207,83 @@ def _remove_configured_path(target_path: Path) -> None:
     target_path.unlink()
 
 
+def _is_quiet_mode() -> bool:
+    return _has_cli_flag("--quiet")
+
+
+def _timeout_seconds() -> int:
+    for argument in sys.argv[1:]:
+        if not argument.startswith("--timeout="):
+            continue
+        raw_value = argument.split("=", 1)[1].strip()
+        if not raw_value:
+            raise ValueError("'--timeout' value must not be empty.")
+        try:
+            timeout_value = int(raw_value)
+        except ValueError as exc:
+            raise ValueError("'--timeout' must be an integer in seconds.") from exc
+        if timeout_value <= 0:
+            raise ValueError("'--timeout' must be greater than 0.")
+        return timeout_value
+    return _DEFAULT_TIMEOUT_SECONDS
+
+
+def _status_line(message: str) -> None:
+    print(message, flush=True)
+
+
+def _download_to_file(
+    *,
+    name: str,
+    url: str,
+    destination_file: Path,
+    timeout_seconds: int,
+    show_progress: bool,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    progress_next_milestone = 0
+    downloaded_size = 0
+
+    with request.urlopen(url, timeout=timeout_seconds) as response:
+        headers = getattr(response, "headers", {}) or {}
+        total_size_raw = headers.get("Content-Length") if hasattr(headers, "get") else None
+        total_size = int(total_size_raw) if total_size_raw and total_size_raw.isdigit() else None
+
+        with destination_file.open("wb") as output:
+            while True:
+                if time.monotonic() > deadline:
+                    raise TimeoutError(
+                        f"Download exceeded timeout of {timeout_seconds} seconds."
+                    )
+
+                chunk = response.read(64 * 1024)
+                if not chunk:
+                    break
+                output.write(chunk)
+                downloaded_size += len(chunk)
+
+                if not show_progress:
+                    continue
+
+                if total_size:
+                    percentage = int((downloaded_size * 100) / total_size)
+                    if percentage >= progress_next_milestone:
+                        _status_line(
+                            f"Download progress [{name}]: {percentage}% ({downloaded_size}/{total_size} bytes)"
+                        )
+                        progress_next_milestone = min(100, percentage + 10)
+                elif downloaded_size >= progress_next_milestone:
+                    _status_line(
+                        f"Download progress [{name}]: {downloaded_size} bytes"
+                    )
+                    progress_next_milestone = downloaded_size + (1024 * 1024)
+
+    if show_progress and total_size and downloaded_size != total_size:
+        _status_line(
+            f"Download progress [{name}]: 100% ({downloaded_size}/{total_size} bytes)"
+        )
+
+
 def _detect_archive_suffix(url: str) -> str:
     path = parse.urlparse(url).path.lower()
     if path.endswith(".tar.gz") or path.endswith(".tgz"):
@@ -231,14 +312,83 @@ def _extract_archive(archive_file: Path, target_dir: Path) -> None:
     raise ValueError(f"Unsupported archive format: {archive_file.name}")
 
 
-def _run_git(args: list[str], *, name: str, url: str, path: str, stage: str) -> None:
+def _run_git(
+    args: list[str],
+    *,
+    name: str,
+    url: str,
+    path: str,
+    stage: str,
+    timeout_seconds: int,
+    show_progress: bool,
+) -> None:
     try:
-        subprocess.run(
+        if not show_progress:
+            subprocess.run(
+                args,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+            return
+
+        process = subprocess.Popen(
             args,
-            check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
         )
+        output_lines: list[str] = []
+        start_time = time.monotonic()
+        assert process.stdout is not None
+
+        while True:
+            if time.monotonic() - start_time > timeout_seconds:
+                process.kill()
+                process.wait()
+                raise TimeoutError(
+                    f"Git {stage} exceeded timeout of {timeout_seconds} seconds."
+                )
+
+            line = process.stdout.readline()
+            if line:
+                line_text = line.rstrip()
+                output_lines.append(line_text)
+                _status_line(line_text)
+                continue
+
+            if process.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        return_code = process.wait()
+        if return_code != 0:
+            stderr = "\n".join(output_lines[-20:])
+            raise subprocess.CalledProcessError(
+                returncode=return_code,
+                cmd=args,
+                stderr=stderr,
+            )
+    except TimeoutError as exc:
+        raise LibSetupDepsError(
+            name=name,
+            url=url,
+            path=path,
+            stage=stage,
+            reason=str(exc),
+            suggestion="Increase --timeout=<seconds> and retry.",
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise LibSetupDepsError(
+            name=name,
+            url=url,
+            path=path,
+            stage=stage,
+            reason=f"Operation timed out after {timeout_seconds} seconds.",
+            suggestion="Increase --timeout=<seconds> and retry.",
+        ) from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
         reason = stderr or str(exc)
@@ -287,6 +437,8 @@ def add_resource(name: str, url: str, path: str) -> None:
     target_dir = _resolve_user_path(resource_path)
     should_reset = _has_cli_flag("--reset")
     should_append_to_gitignore = _has_cli_flag("--append-to-gitignore")
+    quiet_mode = _is_quiet_mode()
+    timeout_seconds = _timeout_seconds()
 
     state = _load_state()
     if should_reset:
@@ -306,6 +458,7 @@ def add_resource(name: str, url: str, path: str) -> None:
     temp_file_path: Path | None = None
 
     try:
+        _status_line(f"Downloading {resource_name} from {resource_url} ...")
         with tempfile.NamedTemporaryFile(
             mode="wb",
             delete=False,
@@ -314,12 +467,28 @@ def add_resource(name: str, url: str, path: str) -> None:
             prefix=f"{resource_name}_",
         ) as temp_file:
             temp_file_path = Path(temp_file.name)
-            with request.urlopen(resource_url) as response:
-                shutil.copyfileobj(response, temp_file)
+        assert temp_file_path is not None
+        _download_to_file(
+            name=resource_name,
+            url=resource_url,
+            destination_file=temp_file_path,
+            timeout_seconds=timeout_seconds,
+            show_progress=not quiet_mode,
+        )
 
         _extract_archive(temp_file_path, target_dir)
+        _status_line(f"Downloading {resource_name} from {resource_url} ... Done")
         state["resources"][resource_name] = signature
         _save_state(state)
+    except TimeoutError as exc:
+        raise LibSetupDepsError(
+            name=resource_name,
+            url=resource_url,
+            path=str(target_dir),
+            stage="download",
+            reason=str(exc),
+            suggestion="Increase --timeout=<seconds> and retry.",
+        ) from exc
     except URLError as exc:
         raise LibSetupDepsError(
             name=resource_name,
@@ -379,6 +548,8 @@ def add_git_resource(
     target_dir = _resolve_user_path(resource_path)
     should_reset = _has_cli_flag("--reset")
     should_append_to_gitignore = _has_cli_flag("--append-to-gitignore")
+    quiet_mode = _is_quiet_mode()
+    timeout_seconds = _timeout_seconds()
 
     ref_pairs: list[tuple[str, str]] = []
     if branch is not None and branch.strip():
@@ -417,13 +588,17 @@ def add_git_resource(
         )
     target_dir.parent.mkdir(parents=True, exist_ok=True)
 
+    _status_line(f"Cloning {resource_name} from {resource_url} ...")
     _run_git(
-        ["git", "clone", resource_url, str(target_dir)],
+        ["git", "clone", "--progress", resource_url, str(target_dir)],
         name=resource_name,
         url=resource_url,
         path=str(target_dir),
         stage="clone",
+        timeout_seconds=timeout_seconds,
+        show_progress=not quiet_mode,
     )
+    _status_line(f"Cloning {resource_name} from {resource_url} ... Done")
 
     if ref_type and ref_value:
         _run_git(
@@ -432,6 +607,8 @@ def add_git_resource(
             url=resource_url,
             path=str(target_dir),
             stage="checkout",
+            timeout_seconds=timeout_seconds,
+            show_progress=False,
         )
 
     state["resources"][resource_name] = signature

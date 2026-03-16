@@ -20,6 +20,8 @@ Optional command-line flags:
 
 - `--append-to-gitignore`: append configured dependency target paths to `<script_dir>/.gitignore` (create if missing, no duplicate entries).
 - `--reset`: delete configured dependency paths before re-downloading/re-cloning; if this is the first run and paths do not exist, nothing is deleted.
+- `--quiet`: print status only (for example `Downloading ... Done` / `Cloning ... Done`) and suppress progress output.
+- `--timeout=<seconds>`: set download/clone timeout (default `120` seconds). Timed-out operations are terminated.
 - `--version`: print current version and exit (currently `0.0.0`).
 - `--help`: print help message and exit.
 

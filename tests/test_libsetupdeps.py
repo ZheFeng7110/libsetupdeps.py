@@ -87,6 +87,26 @@ def test_help_flag_prints_help_and_exits(
     assert "libsetupdeps.py usage:" in output
     assert "--append-to-gitignore" in output
     assert "--reset" in output
+    assert "--quiet" in output
+    assert "--timeout=<seconds>" in output
+
+
+def test_timeout_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_cli_args(monkeypatch)
+    assert libsetupdeps._timeout_seconds() == 120
+
+    _set_cli_args(monkeypatch, "--timeout=45")
+    assert libsetupdeps._timeout_seconds() == 45
+
+
+def test_timeout_invalid_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_cli_args(monkeypatch, "--timeout=abc")
+    with pytest.raises(ValueError):
+        libsetupdeps._timeout_seconds()
+
+    _set_cli_args(monkeypatch, "--timeout=0")
+    with pytest.raises(ValueError):
+        libsetupdeps._timeout_seconds()
 
 
 def test_add_resource_download_to_cache_then_extract(
@@ -112,7 +132,7 @@ def test_add_resource_download_to_cache_then_extract(
     monkeypatch.setattr(
         libsetupdeps.request,
         "urlopen",
-        lambda _url: _FakeResponse(payload),
+        lambda _url, timeout=None: _FakeResponse(payload),
     )
 
     libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
@@ -123,6 +143,62 @@ def test_add_resource_download_to_cache_then_extract(
     cache_dir = tmp_path / ".libsetupdeps_cache"
     assert cache_dir.exists()
     assert list(cache_dir.iterdir()) == []
+
+
+def test_quiet_mode_hides_download_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
+    _set_cli_args(monkeypatch, "--quiet")
+    seen_show_progress: list[bool] = []
+
+    def _fake_download_to_file(**kwargs):
+        seen_show_progress.append(kwargs["show_progress"])
+        kwargs["destination_file"].write_bytes(b"dummy")
+
+    monkeypatch.setattr(libsetupdeps, "_download_to_file", _fake_download_to_file)
+    monkeypatch.setattr(libsetupdeps, "_extract_archive", lambda *args, **kwargs: None)
+
+    libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
+    assert seen_show_progress == [False]
+
+
+def test_download_status_line_printed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
+    _set_cli_args(monkeypatch)
+    monkeypatch.setattr(
+        libsetupdeps,
+        "_download_to_file",
+        lambda **kwargs: kwargs["destination_file"].write_bytes(b"dummy"),
+    )
+    monkeypatch.setattr(libsetupdeps, "_extract_archive", lambda *args, **kwargs: None)
+
+    libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
+    output = capsys.readouterr().out
+    assert "Downloading lua from https://example.org/lua.zip ..." in output
+    assert "Downloading lua from https://example.org/lua.zip ... Done" in output
+
+
+def test_timeout_flag_passed_to_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
+    _set_cli_args(monkeypatch, "--timeout=5")
+    seen_timeout: list[int] = []
+
+    def _fake_download_to_file(**kwargs):
+        seen_timeout.append(kwargs["timeout_seconds"])
+        kwargs["destination_file"].write_bytes(b"dummy")
+
+    monkeypatch.setattr(libsetupdeps, "_download_to_file", _fake_download_to_file)
+    monkeypatch.setattr(libsetupdeps, "_extract_archive", lambda *args, **kwargs: None)
+    libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
+
+    assert seen_timeout == [5]
 
 
 def test_append_to_gitignore_creates_file_and_appends_path(
@@ -143,7 +219,9 @@ def test_append_to_gitignore_creates_file_and_appends_path(
         def __exit__(self, exc_type, exc, tb):
             return None
 
-    monkeypatch.setattr(libsetupdeps.request, "urlopen", lambda _url: _FakeResponse(payload))
+    monkeypatch.setattr(
+        libsetupdeps.request, "urlopen", lambda _url, timeout=None: _FakeResponse(payload)
+    )
     libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
 
     gitignore = tmp_path / ".gitignore"
@@ -169,7 +247,9 @@ def test_append_to_gitignore_does_not_duplicate_entries(
         def __exit__(self, exc_type, exc, tb):
             return None
 
-    monkeypatch.setattr(libsetupdeps.request, "urlopen", lambda _url: _FakeResponse(payload))
+    monkeypatch.setattr(
+        libsetupdeps.request, "urlopen", lambda _url, timeout=None: _FakeResponse(payload)
+    )
 
     libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
     libsetupdeps.add_resource("lua", "https://example.org/lua.zip", "dependency/lua")
@@ -211,7 +291,7 @@ def test_add_resource_updates_state_file(
             return None
 
     monkeypatch.setattr(
-        libsetupdeps.request, "urlopen", lambda _url: _FakeResponse(payload)
+        libsetupdeps.request, "urlopen", lambda _url, timeout=None: _FakeResponse(payload)
     )
     libsetupdeps.add_resource("lua", "https://example.org/lua.tar.gz", "dependency/lua")
 
@@ -315,6 +395,49 @@ def test_add_git_resource_clone_and_checkout_called(
     ]
 
 
+def test_quiet_mode_hides_clone_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
+    _set_cli_args(monkeypatch, "--quiet")
+    calls: list[dict[str, object]] = []
+
+    def _fake_run_git(args, **kwargs):
+        calls.append({"args": args, "show_progress": kwargs["show_progress"], "stage": kwargs["stage"]})
+
+    monkeypatch.setattr(libsetupdeps, "_run_git", _fake_run_git)
+
+    libsetupdeps.add_git_resource(
+        "gtest",
+        "https://example.org/gtest.git",
+        "test/gtest",
+        tag="v1.17.0",
+    )
+    assert calls[0]["stage"] == "clone"
+    assert calls[0]["show_progress"] is False
+
+
+def test_timeout_flag_passed_to_git_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_main_script(monkeypatch, tmp_path / "setupdeps.py")
+    _set_cli_args(monkeypatch, "--timeout=7")
+    seen: list[tuple[str, int]] = []
+
+    def _fake_run_git(args, **kwargs):
+        seen.append((kwargs["stage"], kwargs["timeout_seconds"]))
+
+    monkeypatch.setattr(libsetupdeps, "_run_git", _fake_run_git)
+    libsetupdeps.add_git_resource(
+        "gtest",
+        "https://example.org/gtest.git",
+        "test/gtest",
+        tag="v1.17.0",
+    )
+
+    assert seen == [("clone", 7), ("checkout", 7)]
+
+
 def test_add_git_resource_updates_state_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -372,7 +495,7 @@ def test_reset_redownloads_resource_when_target_already_exists(
         def __exit__(self, exc_type, exc, tb):
             return None
 
-    def _fake_urlopen(_url: str):
+    def _fake_urlopen(_url: str, timeout: int | None = None):
         calls["download"] += 1
         return _FakeResponse(payload)
 
