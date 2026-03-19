@@ -16,6 +16,10 @@
 2. 编写 `setupdeps.py`：调用 `libsetupdeps.py` 的 API 描述您的工程所需要的依赖。
 3. 运行命令 `python setupdeps.py`，完成依赖的配置。
 
+如果您使用 Copilot 智能体，建议在提示词中显式指定本仓库 skill：
+
+- `Use /libsetupdeps-usage to configure dependencies for my C++ project.`
+
 可选命令行参数：
 
 - `--append-to-gitignore`：将本次配置中的依赖目标路径以及 `.libsetupdeps_cache` 追加到 `<script_dir>/.gitignore`（若文件不存在会自动创建，已存在条目不会重复追加）。

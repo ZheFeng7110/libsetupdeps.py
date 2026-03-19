@@ -16,6 +16,10 @@ Its workflow is similar to CMake `FetchContent`, while aiming to avoid repeated 
 2. In that script, call `libsetupdeps.py` APIs to define dependencies.
 3. Run `python setupdeps.py` (or your custom script name) to configure dependencies.
 
+If you use Copilot agents, you can explicitly request this repository skill in prompts:
+
+- `Use /libsetupdeps-usage to configure dependencies for my C++ project.`
+
 Optional command-line flags:
 
 - `--append-to-gitignore`: append configured dependency target paths and `.libsetupdeps_cache` to `<script_dir>/.gitignore` (create if missing, no duplicate entries).
